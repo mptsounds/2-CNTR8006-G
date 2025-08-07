@@ -84,6 +84,9 @@
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
 #define GETCHAR_PROTOTYPE int __io_getchar (void)
 
+// Mold risk evaluation:
+#define SOLAR_HIGH 2000 // >= this val -> high sunlight. Risk = LOW sunlight
+#define HUMIDITY_HIGH 75.0f // >= this val -> high humidity. Risk = HIGH humidity
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -94,9 +97,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-// Look in the DHT.h for the definition
-DHT_DataTypedef DHT11_Data;
+// DHT sensor:
+DHT_DataTypedef DHT11_Data; // Look in the DHT.h for the definition
 float Temperature, Humidity;
+
+// ADC (solar) values for interrupt:
+volatile uint32_t latestAdcValue = 0;
+volatile uint8_t adcUpdated = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -186,7 +193,8 @@ void runAdcTest (void) {
 		return;
 	}
 
-	// Begin ADC read loop
+	uint32_t startTime = HAL_GetTick(); // non-blocking timer for read loop
+	// Begin ADC read loop:
 	printf("ADC test started. Type 'q' to quit.\n\r");
 	while (1) {
 		char exitChar = GetCharFromUART2(); // allow exit via VCP
@@ -195,17 +203,35 @@ void runAdcTest (void) {
 			break;
 		}
 
-		HAL_ADC_Start(&hadc1);
-		if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-			uint32_t adcValue = HAL_ADC_GetValue(&hadc1);
-			printf("ADC Value: %lu\n\r", adcValue);
-		}
-		HAL_ADC_Stop(&hadc1);
+		if (hasElapsed(startTime, 200)) { // non-blocking HAL_Delay equivalent
+			startTime = HAL_GetTick(); // reset timer
 
-		HAL_Delay(200);
-	}
+			HAL_ADC_Start(&hadc1);
+			if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) { // polling, not interrupt
+				uint32_t adcValue = HAL_ADC_GetValue(&hadc1);
+				printf("ADC Value: %lu\n\r", adcValue);
+			}
+			HAL_ADC_Stop(&hadc1);
+		} // end of outer if
+
+	} // end of inner while()
 
 	return;
+} // end of func
+
+
+/*
+ * FUNCTION : HAL_ADC_ConvCpltCallback (ADC interrupt func)
+ * DESCRIPTION :
+ *    Read ADC interrupt value and update them to global vars
+ * PARAMETERS : ADC_HandleTypeDef *hadc (ADC typedef)
+ * RETURNS : void
+ */
+void HAL_ADC_ConvCpltCallback (ADC_HandleTypeDef *hadc) {
+	if (hadc->Instance == ADC1) {
+		latestAdcValue = HAL_ADC_GetValue(hadc);
+		adcUpdated = 1;
+	}
 } // end of func
 
 
@@ -225,37 +251,145 @@ void runDhtTest (void) {
 	char tempStr[20] = {0}; // format output to readable text (OLED prefers string) & init 1st byte to \0
 	char humStr[20] = {0};
 
+	uint32_t startTime = HAL_GetTick(); // non-blocking timer
+
 	while (1) {
 		char exitChar = GetCharFromUART2();
 		if (exitChar == 'q' || exitChar == 'Q') {
 			printf("Quitting DHT11 test. Returning to main menu...\n\r");
 			break;
 		}
+		if ( hasElapsed(startTime, 1100) ) { // non-blocking delay. IMPORTANT: DHT11 can't handle delays lower than 1000 ms...
+			startTime = HAL_GetTick(); // reset timer
+			// Read & update values to some vars:
+			DHT_GetData(&DHT11_Data);
+			Temperature = DHT11_Data.Temperature;
+			Humidity = DHT11_Data.Humidity;
+			snprintf(tempStr, sizeof(tempStr), "Temp: %d C", (int)Temperature); // cast to int instead of (uint16_t) for simplicity
+			snprintf(humStr, sizeof(humStr), "Humidity: %d %%", (int)Humidity); // cast to int instead of (uint16_t) for simplicity
 
-		DHT_GetData(&DHT11_Data);
-		Temperature = DHT11_Data.Temperature;
-		Humidity = DHT11_Data.Humidity;
+			printf("T: %s, H: %s\n\r", tempStr, humStr);
 
-//		printf("T: %d C, H: %d %%\n\r", (int)Temperature, (int)Humidity);
+			// Clear top half of screen by drawing a black rectangle:
+			ssd1331_fill_rect(0, 0, 96, 32, BLACK); // clear top half of screen
+			ssd1331_display_string(0, 0, tempStr, FONT_1206, WHITE);
+			ssd1331_display_string(0, 16, humStr, FONT_1206, WHITE);
 
-		snprintf(tempStr, sizeof(tempStr), "Temp: %d C", (int)Temperature); // cast to int instead of (uint16_t) for simplicity
-		snprintf(humStr, sizeof(humStr), "Humidity: %d %%", (int)Humidity); // cast to int instead of (uint16_t) for simplicity
+			// Display values on OLED:
+			ssd1331_display_string(0, 0, tempStr, FONT_1206, WHITE);
+			ssd1331_display_string(0, 16, humStr, FONT_1206, WHITE);
+		} // end of if
 
-		printf("T: %s, H: %s\n\r", tempStr, humStr);
+	} // end of while()
 
-		// Clear top half of screen by drawing a black rectangle:
-		ssd1331_fill_rect(0, 0, 96, 32, BLACK); // clear top half of screen
-		ssd1331_display_string(0, 0, tempStr, FONT_1206, WHITE);
-		ssd1331_display_string(0, 16, humStr, FONT_1206, WHITE);
+	return;
+} // end of func
 
 
-		// Display values
-		ssd1331_display_string(0, 0, tempStr, FONT_1206, WHITE);
-		ssd1331_display_string(0, 16, humStr, FONT_1206, WHITE);
+/*
+ * FUNCTION: readSensors
+ * DESCRIPTION: Reads humidity and light level from sensors
+ * PARAMETERS: float* humidity, uint32_t* lightLevel
+ * RETURNS: int8_t - 0 if success, -1 if sensor error
+ */
+int8_t readSensors(float* humidity, uint32_t* lightLevel) {
+	// to write
+	return 0;
+}
 
-		HAL_Delay(1000); // 1 second delay
+/*
+ * FUNCTION: evaluateMoldRisk
+ * DESCRIPTION: Checks if mold risk is present based on humidity and light level
+ * PARAMETERS: float humidity, uint32_t lightLevel
+ * RETURNS: int8_t - 1 if mold risk detected, 0 if not (normal values)
+ */
+int8_t evaluateMoldRisk (float humidity, uint32_t lightLevel) {
+	int8_t riskFound = ( humidity >= HUMIDITY_HIGH && lightLevel <= SOLAR_HIGH );
+		/* NOTE 1: using int instead of uint here to potentially return errors in the future
+		 * NOTE 2: still assuming humidity's a float in case we switch sensor model */
+	return riskFound;
+} // end of func
+
+
+/*
+ * FUNCTION: showMoldWarning
+ * DESCRIPTION: Displays mold risk warning on OLED
+ * PARAMETERS: void
+ * RETURNS: void
+ */
+void showMoldWarning (void) {
+	ssd1331_fill_rect(0, 32, 96, 32, RED); // clear bottom half with red
+	ssd1331_display_string(0, 32, "MOLD RISK!", FONT_1206, WHITE); // white text
+    return;
+} // end of func
+
+
+/*
+ * FUNCTION: evaluateAndDisplayRisk
+ * DESCRIPTION: Evaluates mold risk and displays warning if needed
+ * PARAMETERS: float humidity, uint32_t lightLevel
+ * RETURNS: void
+ */
+void evaluateAndDisplayRisk(float humidity, uint32_t lightLevel) {
+	if (evaluateMoldRisk(humidity, lightLevel)) {
+		showMoldWarning();
 	}
+	return;
+} // end of func
 
+
+/*
+ * FUNCTION: runMoldRiskTest
+ * DESCRIPTION: Runs mold risk evaluation loop
+ * 	NOTE:for now I'm implementing this way, but will be updated with circular buffer implementation
+ * PARAMETERS: void
+ * RETURNS: void
+ */
+void runMoldRiskTest(void) {
+	printf("=== Mold Risk Evaluation ===\n\r");
+	printf("Press 'q' to quit.\n\r");
+
+	// Define vars again:
+	char humStr[20] = {0};
+	char lightStr[20] = {0};
+	float humidity = 0;
+	uint32_t lightLevel = 0;
+
+	// Main eval loop
+	while (1) {
+		// Prompt to escape to main menu:
+		char exitChar = GetCharFromUART2();
+		if (exitChar == 'q' || exitChar == 'Q') {
+			printf("Exiting mold risk test.\n\r");
+			break;
+		}
+
+		uint32_t startTime = HAL_GetTick(); // non-blocking timer
+
+		// non-blocking delay:
+		if ( hasElapsed(startTime, 1000) ) { // check every 1 second
+			startTime = HAL_GetTick(); // reset timer
+
+			// Check if sensor outputs make sense:
+			if (readSensors(&humidity, &lightLevel) == -1) {
+				printf("ERROR: DHT sensor not responding.\n\r");
+				ssd1331_display_string(0, 0, "DHT ERROR!", FONT_1206, RED);
+				continue;
+			}
+
+			// Show results on OLED:
+			snprintf(humStr, sizeof(humStr), "Humidity: %d %%", (int)humidity);
+			snprintf(lightStr, sizeof(lightStr), "Light: %lu", lightLevel);
+
+			ssd1331_fill_rect(0, 0, 96, 32, BLACK); // clear top half
+			ssd1331_display_string(0, 0, humStr, FONT_1206, WHITE);
+			ssd1331_display_string(0, 16, lightStr, FONT_1206, WHITE);
+
+			evaluateAndDisplayRisk(humidity, lightLevel);
+		} // end of hasElapsed() if loop
+
+//		HAL_Delay(1000);
+	} // end of inner while(1)
 	return;
 } // end of func
 
@@ -295,12 +429,12 @@ int main(void)
   MX_USART2_UART_Init();
   MX_ADC1_Init();
   MX_SPI2_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   printf("\n\rGroup 3's Demo:\n\r===\n\r");
 
-  // Init OLED:
-  ssd1331_init();
-
+  ssd1331_init(); // Init OLED
+  HAL_ADC_Start_IT(&hadc1); // Start ADC interrupt
 
   // Declare vars:
   uint8_t showMenu = 1; // flag that when set will output the menu prompt
