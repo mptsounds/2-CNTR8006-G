@@ -32,6 +32,8 @@
 *
 *		VCP_RX (PuTTy input -> onboard/Nucleo)
 *
+*		TIM4 (just internal clock, no channel): for non-blocking delay functions
+*
 *	Outputs:
 *		SPI2: OLED: (VCC: 3.3V)
 *			NC: N/A				DIN: PC3 (07_37)		CLK: PC7 (D9)			(DIN is MOSI)
@@ -40,7 +42,10 @@
 *
 *		VCP_TX (Nucleo -> PuTTy)
 *
-*
+*    Citations:
+*		DHT11 library: https://controllerstech.com/using-dht11-sensor-with-stm32/
+*    	Some code troubleshot and partially written with assistance from Copilot. I've reviewed and tested them to understand what they do
+
  ******************************************************************************
  **/
 /* USER CODE END Header */
@@ -48,6 +53,7 @@
 #include "main.h"
 #include "adc.h"
 #include "spi.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -113,11 +119,29 @@ void SystemClock_Config(void);
 void printMenu (void) {
 	printf("Choose a module to test:\n\r");
 	printf("0: Show menu again\n\r");
-	printf("1: DHT11\n\r");
-	printf("2: OLED (SPI2)\n\r");
-	printf("3: Potentiometer (ADC1 CH1)\n\r");
+	printf("1: Test only DHT11\n\r");
+	printf("2: Test only OLED (SPI2)\n\r");
+	printf("3: Test only Solar panel (ADC1 CH1)\n\r");
 	return;
 } // end of func
+
+
+/*
+ * FUNCTION : hasElapsed
+ * DESCRIPTION :
+ *    Non-blocking delay checker. Returns 1 if the specified number of milliseconds
+ *    has passed since the given start time.
+ * PARAMETERS :
+ *    uint32_t startTime : the reference start time (from HAL_GetTick())
+ *    uint32_t duration  : how many milliseconds to wait
+ * RETURNS :
+ *    1 if time has elapsed, 0 otherwise
+ */
+uint8_t hasElapsed(uint32_t startTime, uint32_t duration) {
+	return (HAL_GetTick() - startTime >= duration);
+} // end of func
+
+
 /*
  * FUNCTION : runOledTest
  * DESCRIPTION : Display a fixed string on the OLED
