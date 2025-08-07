@@ -1,0 +1,9 @@
+../Core/Src/main.c:113:6:printMenu	8	static
+../Core/Src/main.c:127:6:runOledTest	24	static
+../Core/Src/main.c:147:6:runAdcTest	16	static
+../Core/Src/main.c:196:6:runDhtTest	64	static
+../Core/Src/main.c:246:5:main	16	static
+../Core/Src/main.c:342:6:SystemClock_Config	88	static
+../Core/Src/main.c:385:1:__io_putchar	16	static
+../Core/Src/main.c:393:1:__io_getchar	16	static
+../Core/Src/main.c:409:6:Error_Handler	4	static,ignoring_inline_asm
