@@ -114,6 +114,8 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
 /*
  * FUNCTION : printMenu
  * DESCRIPTION :
@@ -297,6 +299,7 @@ int8_t readSensors(float* humidity, uint32_t* lightLevel) {
 	return 0;
 }
 
+
 /*
  * FUNCTION: evaluateMoldRisk
  * DESCRIPTION: Checks if mold risk is present based on humidity and light level
@@ -388,7 +391,6 @@ void runMoldRiskTest(void) {
 			evaluateAndDisplayRisk(humidity, lightLevel);
 		} // end of hasElapsed() if loop
 
-//		HAL_Delay(1000);
 	} // end of inner while(1)
 	return;
 } // end of func
@@ -492,6 +494,7 @@ int main(void)
   } // end of while(1)
   /* USER CODE END 3 */
 }
+
 
 /**
   * @brief System Clock Configuration
