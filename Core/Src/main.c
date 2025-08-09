@@ -85,8 +85,12 @@
 #define GETCHAR_PROTOTYPE int __io_getchar (void)
 
 // Mold risk evaluation:
-#define SOLAR_HIGH 2000 // >= this val -> high sunlight. Risk = LOW sunlight
-#define HUMIDITY_HIGH 75.0f // >= this val -> high humidity. Risk = HIGH humidity
+#define SOLAR_HIGH 1700 // >= this val -> high sunlight. Risk = LOW sunlight
+#define HUMIDITY_HIGH 65.0f // >= this val -> high humidity. Risk = HIGH humidity
+
+// Sync read intervals for all sensors:
+#define DHT_READ_INTERVAL 1000 // ms
+#define ADC_READ_INTERVAL 1000 // ms
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -104,6 +108,8 @@ float Temperature, Humidity;
 // ADC (solar) values for interrupt:
 volatile uint32_t latestAdcValue = 0;
 volatile uint8_t adcUpdated = 0;
+uint32_t latestDhtReadtime = 0; // to sync with ADC reading
+uint32_t latestAdcReadtime = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -131,6 +137,8 @@ void printMenu (void) {
 	printf("1: Test only DHT11\n\r");
 	printf("2: Test only OLED (SPI2)\n\r");
 	printf("3: Test only Solar panel (ADC1 CH1)\n\r");
+	printf("4: Test only ADC interrupt\n\r");
+	printf("5: Evaluate mold risk\n\r");
 	return;
 } // end of func
 
@@ -171,7 +179,7 @@ void runOledTest (void) {
  * FUNCTION : runAdcTest
  * DESCRIPTION :
  *    Read analog input from ADC1 and display the value on the terminal.
- *    This test is designed to verify that the potentiometer is wired correctly
+ *    This test is designed to verify that the ADC source is wired correctly
  *    and that the ADC is functioning. Values will be printed continuously.
  *    Type 'q' to quit the test and return to the main menu.
  * PARAMETERS : void
@@ -181,7 +189,7 @@ void runAdcTest (void) {
 	// Short description of the test:
 	printf("=== ADC Input Test ===\n\r");
 	printf("This test reads analog input from a potentiometer via ADC1.\n\r");
-	printf("Ensure the potentiometer is connected to one of the ADC pins.\n\r");
+	printf("Ensure the ADC source is connected to one of the ADC pins.\n\r");
 	printf("Type 'Y' to continue or any other key to cancel...\n\r");
 
 	// Confirmation prompt:
@@ -238,6 +246,28 @@ void HAL_ADC_ConvCpltCallback (ADC_HandleTypeDef *hadc) {
 
 
 /*
+ * FUNCTION: testAdcInterrupt
+ * DESCRIPTION: Simple test to verify ADC1 interrupt is working.
+ *              Prints new ADC values when updated via interrupt.
+ * PARAMETERS: void
+ * RETURNS: void
+ */
+void testAdcInterrupt (void) {
+	// Start ADC in interrupt mode
+	HAL_ADC_Start_IT(&hadc1);
+
+	while (1) {
+		if (adcUpdated) {
+			adcUpdated = 0; // reset flag
+			printf("ADC Interrupt Value: %lu\n\r", latestAdcValue);
+		}
+	}
+
+	HAL_ADC_Stop_IT(&hadc1); // stop ADC interrupt when done
+} // end of func
+
+
+/*
  * FUNCTION : runDhtTest
  * DESCRIPTION :
  *    Read analog input from DHT11 and display the value on the terminal & OLED.
@@ -290,14 +320,35 @@ void runDhtTest (void) {
 
 /*
  * FUNCTION: readSensors
- * DESCRIPTION: Reads humidity and light level from sensors
+ * DESCRIPTION: Reads humidity and light level from sensors at synchronized intervals
  * PARAMETERS: float* humidity, uint32_t* lightLevel
  * RETURNS: int8_t - 0 if success, -1 if sensor error
  */
-int8_t readSensors(float* humidity, uint32_t* lightLevel) {
-	// to write
+int8_t readSensors (float* humidity, uint32_t* lightLevel) {
+	uint32_t now = HAL_GetTick();
+
+	// Read DHT11 if interval has passed:
+	if ( hasElapsed(latestDhtReadtime, DHT_READ_INTERVAL) ) {
+		latestDhtReadtime = now;
+		DHT_GetData(&DHT11_Data); // get data
+
+		// Handle sensor errors/garbage values:
+		if (DHT11_Data.Temperature == 0 && DHT11_Data.Humidity == 0) {
+			return -1; // sensor error
+		}
+		// Read value:
+		*humidity = DHT11_Data.Humidity; // we're only getting humidity data for this, not temperatures
+	}
+
+	// Read ADC value if updated via interrupt and interval has passed:
+	if ( adcUpdated && hasElapsed(latestAdcReadtime, ADC_READ_INTERVAL) ) {
+		latestAdcReadtime = now;
+		adcUpdated = 0; // reset flag
+		*lightLevel = latestAdcValue;
+	}
+
 	return 0;
-}
+} // end of func
 
 
 /*
@@ -333,9 +384,13 @@ void showMoldWarning (void) {
  * PARAMETERS: float humidity, uint32_t lightLevel
  * RETURNS: void
  */
-void evaluateAndDisplayRisk(float humidity, uint32_t lightLevel) {
+void evaluateAndDisplayRisk (float humidity, uint32_t lightLevel) {
 	if (evaluateMoldRisk(humidity, lightLevel)) {
 		showMoldWarning();
+	} else {
+		// Clear bottom half of screen if no risk
+		ssd1331_fill_rect(0, 32, 96, 32, BLACK);
+		ssd1331_display_string(0, 32, "Status: OK", FONT_1206, WHITE);
 	}
 	return;
 } // end of func
@@ -348,7 +403,7 @@ void evaluateAndDisplayRisk(float humidity, uint32_t lightLevel) {
  * PARAMETERS: void
  * RETURNS: void
  */
-void runMoldRiskTest(void) {
+void runMoldRiskTest (void) {
 	printf("=== Mold Risk Evaluation ===\n\r");
 	printf("Press 'q' to quit.\n\r");
 
@@ -357,8 +412,9 @@ void runMoldRiskTest(void) {
 	char lightStr[20] = {0};
 	float humidity = 0;
 	uint32_t lightLevel = 0;
+	uint32_t startTime = HAL_GetTick();
 
-	// Main eval loop
+	// Main eval loop:
 	while (1) {
 		// Prompt to escape to main menu:
 		char exitChar = GetCharFromUART2();
@@ -366,8 +422,6 @@ void runMoldRiskTest(void) {
 			printf("Exiting mold risk test.\n\r");
 			break;
 		}
-
-		uint32_t startTime = HAL_GetTick(); // non-blocking timer
 
 		// non-blocking delay:
 		if ( hasElapsed(startTime, 1000) ) { // check every 1 second
@@ -387,6 +441,9 @@ void runMoldRiskTest(void) {
 			ssd1331_fill_rect(0, 0, 96, 32, BLACK); // clear top half
 			ssd1331_display_string(0, 0, humStr, FONT_1206, WHITE);
 			ssd1331_display_string(0, 16, lightStr, FONT_1206, WHITE);
+
+			// Print results on Terminal:
+			printf("H: %s %%, L: %s\n\r", humStr, lightStr);
 
 			evaluateAndDisplayRisk(humidity, lightLevel);
 		} // end of hasElapsed() if loop
@@ -483,6 +540,14 @@ int main(void)
 	  		  runAdcTest();
 	  		  break;
 
+	  	  case '4': // test ADC interrupt
+	  		  testAdcInterrupt();
+			  break;
+
+	  	  case'5': // integrated testing:
+	  		  runMoldRiskTest();
+	  		  break;
+
 	  	  default:
 	  		  printf("ERROR: invalid menu option!\n\rShowing menu again...\n\r");
 	  		  showMenu = 1; // show menu again
@@ -494,7 +559,6 @@ int main(void)
   } // end of while(1)
   /* USER CODE END 3 */
 }
-
 
 /**
   * @brief System Clock Configuration
